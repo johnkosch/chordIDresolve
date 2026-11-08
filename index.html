@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chord Identification & Resolution</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#202124;background:#f4f5f7}*{box-sizing:border-box}body{margin:0}.wrap{max-width:1000px;margin:auto;padding:26px 18px 42px}h1{margin:0 0 6px;font-size:29px}.intro{margin:0 0 20px;color:#555;line-height:1.45}.card{background:#fff;border:1px solid #ddd;border-radius:14px;padding:20px;margin:15px 0;box-shadow:0 2px 8px #00000008}.prompt{display:flex;align-items:center;gap:24px;flex-wrap:wrap}.key{font-size:25px;font-weight:650}.rn{font-size:30px;font-weight:700}.hint{font-size:14px;color:#666;margin:9px 0 0}.stats{color:#666;font-size:14px;margin-left:auto}.instructions{font-size:14px;color:#555;margin:0 0 12px;line-height:1.45}.staff{width:100%;height:auto;display:block;background:white;border:1px solid #ddd;border-radius:9px;touch-action:manipulation}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:13px}button{font:inherit;padding:9px 13px;border:1px solid #bbb;border-radius:8px;background:white;cursor:pointer}button.primary{background:#202124;color:white;border-color:#202124}button:focus-visible{outline:3px solid #5598e8;outline-offset:2px}button:disabled{opacity:.55;cursor:default}.acc{margin-left:auto;display:flex;align-items:center;gap:5px}.acc button{font-size:21px;min-width:43px}.filter-title{font-size:13px;color:#666;margin:12px 0 8px}#filters{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 12px}#filters label{display:flex;align-items:center;gap:7px;font-size:14px;cursor:pointer}#filters input{width:17px;height:17px;accent-color:#222}.choices{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 4px}.choices button{font-weight:650;min-width:150px}#feedback{font-weight:650;font-size:17px;min-height:28px;margin-top:14px}.good{color:#167139}.bad{color:#b42318}#next{display:none}#score{margin-top:14px;color:#666;font-size:14px}@media(max-width:600px){.card{padding:13px}.acc{margin-left:0}.stats{margin-left:0}.key{font-size:22px}.choices button{flex:1}}
+</style></head><body><main class="wrap">
+<h1>Chord ID &amp; Resolution</h1><p class="intro">Identify the chord, then resolve it in four voices.</p>
+<section class="card"><div class="prompt"><div><div class="hint" id="keyLabel">KEY</div><div id="keyName" class="key"></div></div><div><div class="hint">TASK</div><div id="chordPrompt" class="rn">Identify the chord</div></div><div class="stats" id="score">Completed: 0</div></div></section>
+<section class="card">
+<h2 style="margin-top:0" id="workTitle">Identify the chord</h2><p class="instructions" id="instructions">Choose the chord type shown in the grand staff.</p>
+<canvas id="staff" class="staff" width="1000" height="430" aria-label="Grand staff displaying a chord."></canvas>
+<div class="filter-title">Chord types</div><div id="filters"></div><div id="choices" class="choices"></div>
+<div class="controls" id="editControls" style="display:none"><button id="check" class="primary">Check Resolution</button><button id="undo">Undo</button><button id="duplicate">Double Selected Note</button><button id="clear">Clear</button><div class="acc"><span>Accidental:</span><button data-acc="doubleFlat" aria-label="Double flat">𝄫</button><button data-acc="flat" aria-label="Flat">♭</button><button data-acc="natural" aria-label="Natural">♮</button><button data-acc="sharp" aria-label="Sharp">♯</button><button data-acc="doubleSharp" aria-label="Double sharp">𝄪</button></div></div>
+<div id="feedback" role="status" aria-live="polite"></div>
+<div class="controls"><button id="next" class="primary">Next Exercise</button><button id="show">Show Solution</button></div>
+</section></main>
+<script>
+const CHORD_TYPES=[
+ {id:'secondaryDominant',label:'Secondary Dominant'},
+ {id:'borrowed',label:'Borrowed Chord'},
+ {id:'neapolitan',label:'Neapolitan 6'},
+ {id:'augmentedSixth',label:'Augmented Sixth'},
+ {id:'diminishedSeventh',label:'Diminished Seventh'}
+];
+let selectedKinds=new Set(CHORD_TYPES.map(x=>x.id));
+const canvas=document.getElementById('staff'),ctx=canvas.getContext('2d');
+const LETTERS=['C','D','E','F','G','A','B'],li={C:0,D:1,E:2,F:3,G:4,A:5,B:6},nat={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+const minors=[
+{name:'A minor',tonic:'A',sig:{}},{name:'E minor',tonic:'E',sig:{F:'sharp'}},{name:'B minor',tonic:'B',sig:{F:'sharp',C:'sharp'}},{name:'F♯ minor',tonic:'F',sig:{F:'sharp',C:'sharp',G:'sharp'}},{name:'C♯ minor',tonic:'C',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp'}},{name:'G♯ minor',tonic:'G',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp',A:'sharp'}},{name:'D minor',tonic:'D',sig:{B:'flat'}},{name:'G minor',tonic:'G',sig:{B:'flat',E:'flat'}},{name:'C minor',tonic:'C',sig:{B:'flat',E:'flat',A:'flat'}},{name:'F minor',tonic:'F',sig:{B:'flat',E:'flat',A:'flat',D:'flat'}},{name:'B♭ minor',tonic:'B',sig:{B:'flat',E:'flat',A:'flat',D:'flat',G:'flat'}},{name:'E♭ minor',tonic:'E',sig:{B:'flat',E:'flat',A:'flat',D:'flat',G:'flat',C:'flat'}}].filter(k=>Object.keys(k.sig).length<=5);
+const majors=[
+{name:'C major',tonic:'C',sig:{}},{name:'G major',tonic:'G',sig:{F:'sharp'}},{name:'D major',tonic:'D',sig:{F:'sharp',C:'sharp'}},{name:'A major',tonic:'A',sig:{F:'sharp',C:'sharp',G:'sharp'}},{name:'E major',tonic:'E',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp'}},{name:'B major',tonic:'B',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp',A:'sharp'}},{name:'F♯ major',tonic:'F',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp',A:'sharp',E:'sharp'}},{name:'C♯ major',tonic:'C',sig:{F:'sharp',C:'sharp',G:'sharp',D:'sharp',A:'sharp',E:'sharp',B:'sharp'}},{name:'F major',tonic:'F',sig:{B:'flat'}},{name:'B♭ major',tonic:'B',sig:{B:'flat',E:'flat'}},{name:'E♭ major',tonic:'E',sig:{B:'flat',E:'flat',A:'flat'}},{name:'A♭ major',tonic:'A',sig:{B:'flat',E:'flat',A:'flat',D:'flat'}},{name:'D♭ major',tonic:'D',sig:{B:'flat',E:'flat',A:'flat',D:'flat',G:'flat'}},{name:'G♭ major',tonic:'G',sig:{B:'flat',E:'flat',A:'flat',D:'flat',G:'flat',C:'flat'}},{name:'C♭ major',tonic:'C',sig:{B:'flat',E:'flat',A:'flat',D:'flat',G:'flat',C:'flat',F:'flat'}}].filter(k=>Object.keys(k.sig).length<=5);
+const sharpOrder=['F','C','G','D','A','E','B'],flatOrder=['B','E','A','D','G','C','F'];
+const spacing=30,topY=55,stepY=15,trebleBottom=topY+4*spacing,bassTop=trebleBottom+4*stepY;
+let task=null,sourceNotes=[],notes=[],selected=-1,phase='identify',resolution=null,score=0,total=0,previousKey=null;
+function rand(a){return a[Math.floor(Math.random()*a.length)]}
+function mod(n,m){return((n%m)+m)%m}
+function accVal(a){return a==='sharp'?1:a==='flat'?-1:a==='doubleSharp'?2:a==='doubleFlat'?-2:0}
+function accidentalName(v){return v===1?'sharp':v===-1?'flat':v===2?'doubleSharp':v===-2?'doubleFlat':'natural'}
+function pitchMidi(p){return 12*(p.octave+1)+nat[p.name]+accVal(p.acc)}
+function staffAbs(p){return li[p.name]+7*p.octave}
+function yStep(s){return trebleBottom-s*stepY}
+function ref(){return li.E+7*4}
+function sameSpelling(a,b){return a.name===b.name&&a.acc===b.acc}
+function samePitch(a,b){return sameSpelling(a,b)&&a.octave===b.octave}
+function sortPitches(a){return [...a].sort((x,y)=>pitchMidi(x)-pitchMidi(y))}
+function keyPc(k){let v=nat[k.tonic];let a=k.sig[k.tonic];return mod(v+(a==='sharp'?1:a==='flat'?-1:0),12)}
+function pitchForDegree(k,d,semitones){let idx=li[k.tonic],name=LETTERS[(idx+d)%7],octave=4+Math.floor((idx+d)/7),desired=mod(keyPc(k)+semitones,12),diff=mod(desired-nat[name]+6,12)-6;return{name,octave,acc:accidentalName(diff)}}
+function keySigDefaults(k){return k.sig}
+function drawClefs(){ctx.fillStyle='#111';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='190px serif';ctx.fillText('𝄞',76,topY+2*spacing);ctx.font='150px serif';ctx.fillText('𝄢',76,bassTop+2*spacing)}
+function drawKeySignature(){
+ const sig=task.key.sig,order=Object.keys(sig).length?(Object.values(sig)[0]==='sharp'?sharpOrder:flatOrder):[],isSharp=order===sharpOrder;
+ const treble=isSharp?{F:5,C:5,G:5,D:5,A:4,E:5,B:4}:{B:4,E:5,A:4,D:5,G:4,C:5,F:4},bass=isSharp?{F:3,C:3,G:3,D:3,A:2,E:3,B:2}:{B:2,E:3,A:2,D:3,G:2,C:3,F:2};
+ [treble,bass].forEach(octaves=>{let x=155;for(let name of order){if(!sig[name])continue;let y=yStep(staffAbs({name,octave:octaves[name]})-ref());ctx.font='32px serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#111';ctx.fillText(sig[name]==='sharp'?'♯':'♭',x,y);x+=27}});
+}
+function chordNoteOffset(chord,index){let here=staffAbs(chord[index]),unisons=[];chord.forEach((p,j)=>{if(samePitch(p,chord[index]))unisons.push(j)});if(unisons.length>1)return(unisons.indexOf(index)-(unisons.length-1)/2)*16;let lower=false,upper=false;chord.forEach((p,j)=>{if(j===index)return;let other=staffAbs(p);if(other===here-1)lower=true;if(other===here+1)upper=true});if(lower&&!upper)return 12;if(upper&&!lower)return-12;return 0}
+function accidentalGlyph(a){return a==='sharp'?'♯':a==='flat'?'♭':a==='natural'?'♮':a==='doubleSharp'?'𝄪':a==='doubleFlat'?'𝄫':''}
+function drawNote(p,x,isSelected,chord,index){
+ const nx=x+chordNoteOffset(chord,index),step=staffAbs(p)-ref(),yy=yStep(step);ctx.strokeStyle='#222';ctx.lineWidth=2;
+ if(step===-2||step<-2&&step%2===0){ctx.beginPath();ctx.moveTo(nx-24,yy);ctx.lineTo(nx+24,yy);ctx.stroke()}
+ if(step<-12)for(let q=-14;q>=step;q-=2){ctx.beginPath();ctx.moveTo(nx-24,yStep(q));ctx.lineTo(nx+24,yStep(q));ctx.stroke()}
+ if(step>8)for(let q=10;q<=step;q+=2){ctx.beginPath();ctx.moveTo(nx-24,yStep(q));ctx.lineTo(nx+24,yStep(q));ctx.stroke()}
+ if(isSelected){ctx.strokeStyle='#4285f4';ctx.lineWidth=3;ctx.beginPath();ctx.arc(nx,yy,25,0,Math.PI*2);ctx.stroke()}
+ ctx.fillStyle='#111';ctx.beginPath();ctx.ellipse(nx,yy,16,10,-.35,0,Math.PI*2);ctx.fill();
+ const keyAcc=task.key.sig[p.name]||'natural';if(p.acc!==keyAcc||p.forceNatural){ctx.font='32px serif';ctx.textAlign='center';ctx.fillText(accidentalGlyph(p.acc),nx-30,yy)}
+}
+function draw(){
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#222';ctx.lineWidth=2;
+ for(let i=0;i<5;i++)for(const y0 of [topY,bassTop]){ctx.beginPath();ctx.moveTo(24,y0+i*spacing);ctx.lineTo(970,y0+i*spacing);ctx.stroke()}
+ drawClefs();drawKeySignature();
+ if(phase==='resolve'){sourceNotes.forEach((p,i)=>drawNote(p,365,false,sourceNotes,i));notes.forEach((p,i)=>drawNote(p,700,i===selected,notes,i))}
+ else {let x=520;sourceNotes.forEach((p,i)=>drawNote(p,x,false,sourceNotes,i))}
+}
+function pitchAt(s){let a=ref()+s,name=LETTERS[mod(a,7)],octave=Math.floor(a/7);return{name,octave,acc:task.key.sig[name]||'natural',forceNatural:false}}
+function move(d){if(selected<0)return;let s=staffAbs(notes[selected])-ref()+d,p=pitchAt(s);notes[selected]=p;draw()}
+function canvasPoint(e){let r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}}
+canvas.addEventListener('click',e=>{
+ if(phase!=='resolve')return;let q=canvasPoint(e);
+ for(let i=0;i<notes.length;i++){let yy=yStep(staffAbs(notes[i])-ref()),xx=700+chordNoteOffset(notes,i);if(Math.hypot(q.x-xx,q.y-yy)<27){selected=i;draw();return}}
+ if(q.x<520||notes.length>=4)return;let s=Math.round((trebleBottom-q.y)/stepY);notes.push(pitchAt(s));selected=notes.length-1;document.getElementById('feedback').textContent='';draw();
+});
+document.addEventListener('keydown',e=>{if(e.key==='ArrowUp'){e.preventDefault();move(1)}if(e.key==='ArrowDown'){e.preventDefault();move(-1)}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z')undo()});
+function undo(){if(notes.length){notes.pop();selected=notes.length-1;draw()}}
+document.getElementById('undo').onclick=undo;
+document.getElementById('duplicate').onclick=()=>{let f=document.getElementById('feedback');if(selected<0){f.className='bad';f.textContent='Select a note to double first.';return}if(notes.length>=4){f.className='bad';f.textContent='All four voices are already entered.';return}notes.push({...notes[selected]});selected=notes.length-1;draw()};
+document.getElementById('clear').onclick=()=>{notes=[];selected=-1;document.getElementById('feedback').textContent='';draw()};
+document.querySelectorAll('[data-acc]').forEach(b=>b.onclick=()=>{if(selected<0)return;notes[selected].acc=b.dataset.acc;notes[selected].forceNatural=b.dataset.acc==='natural';draw()});
+function absoluteMidi(note,octave){return(octave+1)*12+mod(nat[note[0]]+accVal(note.slice(1)),12)}
+function spellWithLetter(letter,pc){let d=mod(pc-nat[letter],12);if(d>6)d-=12;return letter+(d===1?'#':d===2?'##':d===-1?'b':d===-2?'bb':'')}
+function n6Chord(k){let i=li[k.tonic],rootL=LETTERS[mod(i+1,7)],thirdL=LETTERS[mod(i+3,7)],fifthL=LETTERS[mod(i+5,7)];return{root:spellWithLetter(rootL,mod(keyPc(k)+1,12)),third:spellWithLetter(thirdL,mod(keyPc(k)+5,12)),fifth:spellWithLetter(fifthL,mod(keyPc(k)+8,12))}}
+function n6PreferredVoicing(k,ch){
+ let tones=[ch.third,ch.root,ch.third,ch.fifth],c=[];
+ for(let a=2;a<=4;a++)for(let b=2;b<=5;b++)for(let d=2;d<=5;d++)for(let e=2;e<=5;e++){
+  let v=tones.map((n,i)=>({name:n[0],acc:n.slice(1)==='#'?'sharp':n.slice(1)==='##'?'doubleSharp':n.slice(1)==='b'?'flat':n.slice(1)==='bb'?'doubleFlat':'natural',octave:[a,b,d,e][i]})),o=sortPitches(v);
+  const spell=p=>p.name+(p.acc==='sharp'?'#':p.acc==='flat'?'b':p.acc==='doubleSharp'?'##':p.acc==='doubleFlat'?'bb':'');
+  let counts=[ch.root,ch.third,ch.fifth].map(n=>v.filter(p=>spell(p)===n).length);
+  if(counts[0]!==1||counts[1]!==2||counts[2]!==1||spell(o[0])!==ch.third)continue;
+  if(!n6RangesOk(o)||!upperSpacingOk(o))continue;
+  let ra=v.find(p=>spell(p)===ch.root),le=v.find(p=>spell(p)===ch.fifth);
+  if(pitchMidi(le)>pitchMidi(ra)||pitchMidi(o[1])-pitchMidi(o[0])<8)continue;c.push(v);
+ }
+ return c[0]||null;
+}
+function augPitch(k,d,semi){return pitchForDegree(k,d,semi)}
+function augChord(k,type){
+ let le=augPitch(k,5,8),doN=augPitch(k,0,0),fi=augPitch(k,3,6),re=augPitch(k,1,2),me=augPitch(k,2,3),ri=augPitch(k,1,3);
+ let tones=type==='Italian'?[le,doN,doN,fi]:type==='French'?[le,doN,re,fi]:[le,doN,me,fi];return{type,tones,le,fi,ri};
+}
+
+
+function secondaryDominantChord(k,mode,targetDegree){
+ const scale=mode==='major'?[0,2,4,5,7,9,11]:[0,2,3,5,7,8,10];
+ const targetLetterIndex=li[k.tonic]+targetDegree;
+ const targetLetter=LETTERS[mod(targetLetterIndex,7)];
+ const targetOctave=4+Math.floor(targetLetterIndex/7);
+ const targetSemitones=scale[targetDegree];
+ const rootLetterIndex=targetLetterIndex+4;
+ const rootDegreeSemitones=targetSemitones+7;
+ const make=(letterIndex,semitones)=>{
+  const name=LETTERS[mod(letterIndex,7)],octave=4+Math.floor(letterIndex/7);
+  const desired=mod(keyPc(k)+semitones,12);
+  const diff=mod(desired-nat[name]+6,12)-6;
+  return{name,octave,acc:accidentalName(diff)};
+ };
+ const root=make(rootLetterIndex,rootDegreeSemitones);
+ const third=make(rootLetterIndex+2,rootDegreeSemitones+4);
+ const fifth=make(rootLetterIndex+4,rootDegreeSemitones+7);
+ const seventh=make(rootLetterIndex+6,rootDegreeSemitones+10);
+ const roman=(mode==='major'?['I','ii','iii','IV','V','vi','vii°']:['i','ii°','III','iv','V','VI','vii°'])[targetDegree];
+ let triadThirdSemitones;
+ if(mode==='major')triadThirdSemitones=[0,3,3,4,4,3,3][targetDegree];
+ else triadThirdSemitones=targetDegree===4?4:([0,3,3,4,3,4,4][targetDegree]);
+ const targetTones=[
+  make(targetLetterIndex,targetSemitones),
+  make(targetLetterIndex+2,targetSemitones+triadThirdSemitones),
+  make(targetLetterIndex+4,targetSemitones+7)
+ ];
+ return{root,third,fifth,seventh,tones:[root,third,fifth,seventh],targetDegree,targetLabel:roman,targetTones};
+}
+function secondaryCandidateSets(){
+ const src=sortPitches(sourceNotes),rootIndex=src.findIndex(p=>sameSpelling(p,task.chord.root));
+ const thirdIndex=src.findIndex(p=>sameSpelling(p,task.chord.third));
+ const seventhIndex=src.findIndex(p=>sameSpelling(p,task.chord.seventh));
+ const target=task.chord.targetTones;
+ const candidatesFor=(p,dirs,allowCommon)=>{
+  const out=[];
+  if(allowCommon&&target.some(t=>sameSpelling(p,t)))out.push({...p});
+  for(const t of target)for(let oct=p.octave-2;oct<=p.octave+2;oct++){
+   const q={...t,octave:oct},motion=staffAbs(q)-staffAbs(p),semi=Math.abs(pitchMidi(q)-pitchMidi(p));
+   if(dirs.includes(Math.sign(motion))&&Math.abs(motion)===1&&semi<=2&&!out.some(x=>samePitch(x,q)))out.push(q);
+  }
+  return out;
+ };
+ return src.map((p,i)=>{
+  if(i===0&&i===rootIndex){
+   const out=[];
+   for(const t of target.slice(0,1))for(let oct=p.octave-2;oct<=p.octave+2;oct++){
+    const q={...t,octave:oct},motion=staffAbs(q)-staffAbs(p),semi=pitchMidi(q)-pitchMidi(p);
+    if((motion===3&&semi===5)||(motion===-4&&semi===-7))out.push(q);
+   }
+   return out;
+  }
+  if(i===seventhIndex)return candidatesFor(p,[-1],false);
+  if(i===thirdIndex&&(i===0||i===3))return candidatesFor(p,[1],false);
+  if(i===0)return candidatesFor(p,[-1,1],false);
+  return candidatesFor(p,[-1,1],true);
+ });
+}
+function secondaryResolutionOk(){
+ if(!secondaryRangesOk(notes)||!upperSpacingOk(notes))return false;
+ const src=sortPitches(sourceNotes),dst=sortPitches(notes);
+ if(src.length!==4||dst.length!==4)return false;
+ // Preserve voice order: no crossing or voice reassignment.
+ for(let i=1;i<4;i++)if(pitchMidi(dst[i])<pitchMidi(dst[i-1]))return false;
+ const rootIndex=src.findIndex(p=>sameSpelling(p,task.chord.root));
+ const thirdIndex=src.findIndex(p=>sameSpelling(p,task.chord.third));
+ const seventhIndex=src.findIndex(p=>sameSpelling(p,task.chord.seventh));
+ if(rootIndex<0||thirdIndex<0||seventhIndex<0)return false;
+ const rootPosition=rootIndex===0;
+ for(let i=0;i<4;i++){
+  const motion=staffAbs(dst[i])-staffAbs(src[i]),semi=pitchMidi(dst[i])-pitchMidi(src[i]);
+  if(i===0&&rootPosition){
+   if(!sameSpelling(dst[i],task.chord.targetTones[0]))return false;
+   if(!((motion===3&&semi===5)||(motion===-4&&semi===-7)))return false;
+  }else if(i===seventhIndex){
+   if(motion!==-1||semi>=0||Math.abs(semi)>2)return false;
+  }else if(i===thirdIndex&&(i===0||i===3)){
+   if(motion!==1||semi<=0||semi>2)return false;
+  }else if(i===0){
+   // In an inversion, the bass must move by step; it may not remain
+   // on a common tone. Only root-position basses receive the leap option.
+   if(Math.abs(motion)!==1||Math.abs(semi)>2)return false;
+  }else{
+   const common=samePitch(src[i],dst[i]);
+   const step=Math.abs(motion)===1&&Math.abs(semi)<=2;
+   if(!common&&!step)return false;
+  }
+  if(!task.chord.targetTones.some(t=>sameSpelling(dst[i],t)))return false;
+ }
+ const [r,t,f]=task.chord.targetTones;
+ const rc=dst.filter(p=>sameSpelling(p,r)).length,tc=dst.filter(p=>sameSpelling(p,t)).length,fc=dst.filter(p=>sameSpelling(p,f)).length;
+ return (rc>=1&&tc>=1&&fc>=1)||(rc===3&&tc===1&&fc===0);
+}
+function secondaryFindSolution(){
+ const sets=secondaryCandidateSets(),solutions=[];
+ function build(i,a){
+  if(i===sets.length){
+   const old=notes;notes=sortPitches(a);
+   if(secondaryResolutionOk())solutions.push(notes.map(p=>({...p})));
+   notes=old;return;
+  }
+  for(const p of sets[i])build(i+1,[...a,{...p}]);
+ }
+ build(0,[]);
+ return solutions[0]||null;
+}
+function secondaryPreferredVoicing(k,ch){
+ const roles=[ch.root,ch.third,ch.fifth,ch.seventh],candidates=[];
+ function permutations(a,n=0){
+  if(n===a.length){candidates.push([...a]);return}
+  for(let i=n;i<a.length;i++){[a[n],a[i]]=[a[i],a[n]];permutations(a,n+1);[a[n],a[i]]=[a[i],a[n]]}
+ }
+ permutations([...roles]);
+ for(let i=candidates.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[candidates[i],candidates[j]]=[candidates[j],candidates[i]]}
+ const savedTask=task,savedSource=sourceNotes,savedNotes=notes;
+ for(const order of candidates){
+  let best=[];
+  function octaves(i,a){
+   if(i===4){
+    const v=sortPitches(a);
+    if(!secondaryRangesOk(v)||!upperSpacingOk(v))return;
+    const cost=v.reduce((sum,p,j)=>sum+Math.abs(pitchMidi(p)-[48,60,67,72][j]),0);
+    best.push({v,cost});return;
+   }
+   for(let o=2;o<=5;o++)octaves(i+1,[...a,{...order[i],octave:o}]);
+  }
+  octaves(0,[]);
+  best.sort((a,b)=>a.cost-b.cost);
+  // Try a randomized subset of the best voicings, so inversions can vary.
+  const pool=best.slice(0,Math.min(24,best.length));
+  for(const candidate of pool){
+   task={kind:'secondaryDominant',key:k,chord:ch};
+   sourceNotes=candidate.v;notes=[];
+   const solution=secondaryFindSolution();
+   if(solution){task=savedTask;sourceNotes=savedSource;notes=savedNotes;return candidate.v}
+  }
+ }
+ task=savedTask;sourceNotes=savedSource;notes=savedNotes;
+ return null;
+}
+
+function diminishedSeventhChord(k,mode,targetDegree){
+ const scale=mode==='major'?[0,2,4,5,7,9,11]:[0,2,3,5,7,8,10];
+ const targetPc=mod(keyPc(k)+scale[targetDegree],12);
+ const rootPc=mod(targetPc-1,12);
+ const rootIndex=li[k.tonic]+targetDegree-1;
+ const tones=[0,3,6,9].map((semitones,i)=>{
+  const idx=rootIndex+2*i,name=LETTERS[mod(idx,7)],octave=4+Math.floor(idx/7);
+  const diff=mod(rootPc+semitones-nat[name]+6,12)-6;
+  return{name,octave,acc:accidentalName(diff)};
+ });
+ const targetTones=[0,2,4].map(offset=>{
+  const degree=targetDegree+offset,idx=li[k.tonic]+degree,name=LETTERS[mod(idx,7)],octave=4+Math.floor(idx/7);
+  const pc=mod(keyPc(k)+scale[degree%7],12),diff=mod(pc-nat[name]+6,12)-6;
+  return{name,octave,acc:accidentalName(diff)};
+ });
+ const targetLabel=mode==='major'?(targetDegree===1?'ii':'V'):(targetDegree===3?'iv':'i');
+ return{type:'diminishedSeventh',tones,root:tones[0],seventh:tones[3],targetTones,targetDegree,targetLabel};
+}
+function diminishedPreferredVoicing(ch){
+ const candidates=[];
+ for(let a=2;a<=4;a++)for(let b=3;b<=5;b++)for(let c=3;c<=5;c++)for(let d=3;d<=5;d++){
+  const v=ch.tones.map((p,i)=>({...p,octave:[a,b,c,d][i]})),o=sortPitches(v),m=o.map(pitchMidi);
+  if(m[2]-m[1]>12||m[3]-m[2]>12||m[1]-m[0]<8)continue;
+  if(!n6RangesOk(o))continue;
+  const cost=Math.abs(m[0]-48)+Math.abs(m[1]-60)+Math.abs(m[2]-67)+Math.abs(m[3]-72);
+  candidates.push({v,cost});
+ }
+ candidates.sort((a,b)=>a.cost-b.cost);
+ return candidates[0]?.v||null;
+}
+function diminishedDestinationTones(){return task.chord.targetTones}
+function diminishedCandidateSets(){
+ const src=sortPitches(sourceNotes),rootIndex=src.findIndex(p=>sameSpelling(p,task.chord.root)),seventhIndex=src.findIndex(p=>sameSpelling(p,task.chord.seventh));
+ return src.map((p,i)=>{
+  if(i===rootIndex){let q=chromaticStep(p,1);return q&&pitchMidi(q)-pitchMidi(p)===1?[q]:[]}
+  if(i===seventhIndex){let q=chromaticStep(p,-1);return q&&pitchMidi(p)-pitchMidi(q)===1?[q]:[]}
+  const choices=[];
+  for(const tone of diminishedDestinationTones())for(let oct=-2;oct<=2;oct++){
+   const q={...tone,octave:tone.octave+oct},motion=staffAbs(q)-staffAbs(p),semitones=Math.abs(pitchMidi(q)-pitchMidi(p));
+   if(Math.abs(motion)===1&&semitones<=2&&!choices.some(x=>samePitch(x,q)))choices.push(q);
+  }
+  return choices;
+ });
+}
+function diminishedResolutionOk(){
+ if(!n6RangesOk(notes)||!upperSpacingOk(notes))return false;
+ const src=sortPitches(sourceNotes),dst=sortPitches(notes);
+ if(src.length!==4||dst.length!==4)return false;
+ const rootIndex=src.findIndex(p=>sameSpelling(p,task.chord.root)),seventhIndex=src.findIndex(p=>sameSpelling(p,task.chord.seventh));
+ if(rootIndex<0||seventhIndex<0||rootIndex===seventhIndex)return false;
+ for(let i=0;i<4;i++){
+  const motion=staffAbs(dst[i])-staffAbs(src[i]);
+  if(i===rootIndex){
+   const expected=chromaticStep(src[i],1);
+   if(!expected||pitchMidi(expected)-pitchMidi(src[i])!==1||!samePitch(dst[i],expected))return false;
+  }else if(i===seventhIndex){
+   const expected=chromaticStep(src[i],-1);
+   if(!expected||pitchMidi(src[i])-pitchMidi(expected)!==1||!samePitch(dst[i],expected))return false;
+  }else{
+   if(Math.abs(motion)!==1||Math.abs(pitchMidi(dst[i])-pitchMidi(src[i]))>2)return false;
+   if(!diminishedDestinationTones().some(t=>sameSpelling(dst[i],t)))return false;
+  }
+ }
+ const root=task.chord.targetTones[0],third=task.chord.targetTones[1];
+ return dst.some(p=>sameSpelling(p,root))&&dst.some(p=>sameSpelling(p,third));
+}
+
+function borrowedChord(k,type){
+ const specs={
+  'iv':{tones:[[3,5],[5,8],[0,0]],bass:[3,5]},
+  'iv6':{tones:[[3,5],[5,8],[0,0]],bass:[5,8]},
+  'ii dim6':{tones:[[1,2],[3,5],[5,8]],bass:[3,5]},
+  'ii dim43':{tones:[[1,2],[3,5],[5,8],[0,0]],bass:[5,8]}
+ };
+ const spec=specs[type],tones=spec.tones.map(([d,st])=>pitchForDegree(k,d,st)),bass=pitchForDegree(k,...spec.bass);
+ return{type,tones,bass};
+}
+function borrowedPreferredVoicing(ch,k){
+ const bass=ch.bass,upperTones=ch.tones;
+ let candidates=[];
+ const options=upperTones.flatMap(t=>[2,3,4,5].map(o=>({...t,octave:o})));
+ // The triads are doubled in a way that permits the prescribed resolutions:
+ // iv and ii°6 double the bass chord tone; iv6 doubles the fifth; iiø4/3 uses all four tones.
+ const requiredUpper=ch.type==='iv6'?[ch.tones[0],ch.tones[2],ch.tones[2]]:ch.type==='ii dim43'?ch.tones.filter(t=>!sameSpelling(t,bass)):ch.tones;
+ for(let bassOct=2;bassOct<=4;bassOct++)for(let a of options)for(let b of options)for(let c of options){
+  let v=[{...bass,octave:bassOct},a,b,c],o=sortPitches(v),upper=v.slice(1);
+  if(!sameSpelling(o[0],bass)||!n6RangesOk(o)||!upperSpacingOk(o))continue;
+  if(!requiredUpper.every((t,i)=>upper.filter(p=>sameSpelling(p,t)).length>=requiredUpper.slice(0,i+1).filter(q=>sameSpelling(q,t)).length))continue;
+  const bassAbs=staffAbs({...bass,octave:bassOct})+((ch.type==='iv'||ch.type==='ii dim6')?1:-1),bassName=LETTERS[mod(bassAbs,7)],bassResolution={name:bassName,octave:Math.floor(bassAbs/7),acc:k.sig[bassName]||'natural'};
+  if(pitchMidi(bassResolution)<pitchMidi({name:'G',octave:2,acc:'natural'})||pitchMidi(bassResolution)>pitchMidi({name:'D',octave:4,acc:'natural'}))continue;
+  if(ch.type==='ii dim43'&&new Set(v.map(p=>p.name+':'+p.acc)).size!==4)continue;
+  let target=[48,60,67,72],cost=o.reduce((sum,p,i)=>sum+Math.abs(pitchMidi(p)-target[i]),0);
+  candidates.push({v,cost});
+ }
+ candidates.sort((x,y)=>x.cost-y.cost);
+ return candidates[0]?.v||null;
+}
+function upperSpacingOk(a){let o=sortPitches(a);return o.length===4&&pitchMidi(o[2])-pitchMidi(o[1])<=12&&pitchMidi(o[3])-pitchMidi(o[2])<=12}
+function n6RangesOk(a){let o=sortPitches(a),ranges=[[pitchMidi({name:'G',octave:2,acc:'natural'}),pitchMidi({name:'D',octave:4,acc:'natural'})],[pitchMidi({name:'C',octave:3,acc:'natural'}),pitchMidi({name:'G',octave:4,acc:'natural'})],[pitchMidi({name:'G',octave:3,acc:'natural'}),pitchMidi({name:'D',octave:5,acc:'natural'})],[pitchMidi({name:'C',octave:4,acc:'natural'}),pitchMidi({name:'G',octave:5,acc:'natural'})]];return o.length===4&&o.every((p,i)=>pitchMidi(p)>=ranges[i][0]&&pitchMidi(p)<=ranges[i][1])}
+
+function secondaryRangesOk(a){
+ let o=sortPitches(a),ranges=[
+  [pitchMidi({name:'F',octave:2,acc:'sharp'}),pitchMidi({name:'D',octave:4,acc:'natural'})],
+  [pitchMidi({name:'C',octave:3,acc:'natural'}),pitchMidi({name:'G',octave:4,acc:'natural'})],
+  [pitchMidi({name:'G',octave:3,acc:'natural'}),pitchMidi({name:'D',octave:5,acc:'natural'})],
+  [pitchMidi({name:'C',octave:4,acc:'natural'}),pitchMidi({name:'G',octave:5,acc:'natural'})]
+ ];
+ return o.length===4&&o.every((p,i)=>pitchMidi(p)>=ranges[i][0]&&pitchMidi(p)<=ranges[i][1]);
+}
+function augPreferredVoicing(ch){
+ let candidates=[];for(let a=2;a<=4;a++)for(let b=3;b<=5;b++)for(let c=3;c<=5;c++)for(let d=3;d<=5;d++){
+  let v=ch.tones.map((p,i)=>({...p,octave:[a,b,c,d][i]})),o=sortPitches(v);if(!upperSpacingOk(v)||pitchMidi(o[1])-pitchMidi(o[0])<8)continue;
+  // le must be the actual bass note, not merely positioned below fi.
+  if(!sameSpelling(o[0],ch.le))continue;
+  let score=Math.abs(pitchMidi(o[0])-48)+Math.abs(pitchMidi(o[1])-60)+Math.abs(pitchMidi(o[2])-67)+Math.abs(pitchMidi(o[3])-72);candidates.push({v,score});
+ }candidates.sort((a,b)=>a.score-b.score);return candidates[0]?.v||null;
+}
+function sameNameAcc(a,b){return a.name===b.name&&a.acc===b.acc}
+function chromaticStep(p,dir){let abs=staffAbs(p)+dir,name=LETTERS[mod(abs,7)],octave=Math.floor(abs/7),desired=pitchMidi(p)+dir,diff=desired-(12*(octave+1)+nat[name]),acc=({2:'doubleSharp',1:'sharp',0:'natural','-1':'flat','-2':'doubleFlat'})[diff];return acc===undefined?null:{name,octave,acc}}
+function diatonicStep(p,dir){let abs=staffAbs(p)+dir,name=LETTERS[mod(abs,7)],octave=Math.floor(abs/7);return{name,octave,acc:task.key.sig[name]||'natural'}}
+function degreePitch(d,semitones){return pitchForDegree(task.key,d,semitones)}
+function nearestDegreePitch(source,d,semitones,direction=0){let base=degreePitch(d,semitones),c=[];for(let o=-2;o<=2;o++)c.push({...base,octave:base.octave+o});c.sort((a,b)=>Math.abs(pitchMidi(a)-pitchMidi(source))-Math.abs(pitchMidi(b)-pitchMidi(source))||(direction>0?pitchMidi(b)-pitchMidi(a):direction<0?pitchMidi(a)-pitchMidi(b):pitchMidi(a)-pitchMidi(b)));return c[0]}
+function nearestDominantTone(source,includeSeventh){let degrees=[[4,7],[6,11],[1,2]];if(includeSeventh)degrees.push([3,5]);let c=[];degrees.forEach(([d,s])=>{let base=degreePitch(d,s);for(let o=-2;o<=2;o++)c.push({...base,octave:base.octave+o})});c=c.filter(p=>pitchMidi(p)<=pitchMidi(source));c.sort((a,b)=>Math.abs(pitchMidi(a)-pitchMidi(source))-Math.abs(pitchMidi(b)-pitchMidi(source))||pitchMidi(b)-pitchMidi(a));return c[0]||source}
+function buildN6Targets(){
+ let ordered=sortPitches(sourceNotes),bass=ordered[0],upper=ordered.slice(1);
+ if(resolution==='i64')return[diatonicStep(bass,1),...upper.map(n=>diatonicStep(n,-1))];
+ let ra=upper.findIndex(n=>sameNameAcc(n,{name:task.chord.root[0],acc:task.chord.root.slice(1)==='#'?'sharp':task.chord.root.slice(1)==='##'?'doubleSharp':task.chord.root.slice(1)==='b'?'flat':task.chord.root.slice(1)==='bb'?'doubleFlat':'natural'}));
+ if(ra<0)return null;let targets=[];
+ upper.forEach((n,i)=>targets.push(i===ra?nearestDegreePitch(n,6,11,-1):nearestDominantTone(n,resolution==='V7')));
+ return[diatonicStep(bass,1),...targets];
+}
+function augDestinationTones(){return resolution==='I64'?[degreePitch(4,7),degreePitch(0,0),degreePitch(2,4)]:[degreePitch(4,7),degreePitch(6,11),degreePitch(1,2)]}
+function augCandidateSets(){
+ return sourceNotes.map(src=>{
+  if(sameNameAcc(src,task.chord.fi)){let p=chromaticStep(src,1);return p&&pitchMidi(p)-pitchMidi(src)===1?[p]:[]}
+  if(sameNameAcc(src,task.chord.le)){let p=chromaticStep(src,-1);return p&&pitchMidi(src)-pitchMidi(p)===1?[p]:[]}
+  let c=[{...src},diatonicStep(src,1),diatonicStep(src,-1)];
+  if(task.chord.type==='German'&&sameNameAcc(src,task.chord.tones[2])){let mi=degreePitch(2,4);mi.octave=src.octave;if(pitchMidi(mi)-pitchMidi(src)===1)c.push(mi)}
+  return c.filter((p,i,a)=>augDestinationTones().some(t=>sameNameAcc(p,t))&&!a.slice(0,i).some(q=>samePitch(p,q)));
+ });
+}
+function matchSets(actual,sets){let rem=actual.map(p=>({...p}));function visit(i){if(i===sets.length)return rem.length===0;for(let p of sets[i]){let j=rem.findIndex(n=>samePitch(n,p));if(j>=0){let[u]=rem.splice(j,1);if(visit(i+1))return true;rem.splice(j,0,u)}}return false}return visit(0)}
+function n6V7DescendingThirdOption(){
+ // Bass rises by step; ra (the lowered supertonic) resolves to ti.
+ // Each remaining upper voice may descend a diatonic third to a V7 chord tone.
+ let src=sortPitches(sourceNotes),dst=sortPitches(notes);
+ if(src.length!==4||dst.length!==4)return false;
+ if(staffAbs(dst[0])-staffAbs(src[0])!==1)return false;
+ let raIndex=src.findIndex(p=>sameSpelling(p,{
+  name:task.chord.root[0],
+  acc:task.chord.root.slice(1)==='#'?'sharp':task.chord.root.slice(1)==='##'?'doubleSharp':task.chord.root.slice(1)==='b'?'flat':task.chord.root.slice(1)==='bb'?'doubleFlat':'natural'
+ }));
+ if(raIndex<1)return false;
+ const ti=degreePitch(6,11);
+ if(!sameSpelling(dst[raIndex],ti))return false;
+ const v7Tones=[[4,7],[6,11],[1,2],[3,5]].map(([d,s])=>degreePitch(d,s));
+ for(let i=1;i<4;i++){
+  if(i===raIndex)continue;
+  if(staffAbs(dst[i])-staffAbs(src[i])!==-2)return false;
+  if(!v7Tones.some(t=>sameSpelling(dst[i],t)))return false;
+ }
+ return true;
+}
+function n6ResolutionOk(){
+ if(!n6RangesOk(notes)||!upperSpacingOk(notes))return false;
+ let expected=sortPitches(task.targets),actual=sortPitches(notes),ok=expected.every((p,i)=>samePitch(p,actual[i]));
+ if(!ok&&resolution==='V7'){
+  let fifth=degreePitch(1,2),root=degreePitch(4,7);
+  for(let i=0;i<expected.length&&!ok;i++)if(sameSpelling(expected[i],fifth)){
+   let alt=expected.map((p,j)=>j===i?{...root,octave:p.octave}:{...p});
+   alt=sortPitches(alt);ok=alt.every((p,j)=>samePitch(p,actual[j]));
+  }
+  if(!ok)ok=n6V7DescendingThirdOption();
+ }
+ return ok;
+}
+function borrowedDestinationTones(){
+ if(resolution==='I64')return [[4,7],[0,0],[2,4]].map(([d,st])=>degreePitch(d,st));
+ const tones=[[4,7],[6,11],[1,2]];
+ if(resolution==='V7')tones.push([3,5]);
+ return tones.map(([d,st])=>degreePitch(d,st));
+}
+function borrowedCandidateSets(){
+ const src=sortPitches(sourceNotes),bassDirection=(task.chord.type==='iv'||task.chord.type==='ii dim6')?1:-1;
+ const bassTarget=diatonicStep(src[0],bassDirection),dest=borrowedDestinationTones();
+ const sets=[[bassTarget]];
+ for(let i=1;i<src.length;i++){
+  const p=src[i],c=[{...p},diatonicStep(p,1),diatonicStep(p,-1)];
+  sets.push(c.filter((q,j,arr)=>dest.some(t=>sameSpelling(q,t))&&!arr.slice(0,j).some(z=>samePitch(z,q))));
+ }
+ return sets;
+}
+function borrowedResolutionOk(){
+ if(!n6RangesOk(notes)||!upperSpacingOk(notes))return false;
+ const src=sortPitches(sourceNotes),dst=sortPitches(notes);
+ if(src.length!==4||dst.length!==4)return false;
+ const bassDirection=(task.chord.type==='iv'||task.chord.type==='ii dim6')?1:-1;
+ if(staffAbs(dst[0])-staffAbs(src[0])!==bassDirection)return false;
+ const tones=borrowedDestinationTones();
+ for(let i=1;i<4;i++){
+  const common=samePitch(src[i],dst[i]);
+  const motion=staffAbs(dst[i])-staffAbs(src[i]);
+  const step=(task.chord.type==='iv'||task.chord.type==='ii dim6')?motion===-1:Math.abs(motion)===1;
+  if(!common&&!step)return false;
+  if(!tones.some(t=>sameSpelling(dst[i],t)))return false;
+ }
+ // Every destination chord tone must be represented; V7 requires all four.
+ return tones.every(t=>dst.some(p=>sameSpelling(p,t)));
+}
+function setFeedback(msg,good=false){let f=document.getElementById('feedback');f.textContent=msg;f.className=good?'good':'bad'}
+function renderFilters(){
+ let box=document.getElementById('filters');box.innerHTML='';
+ CHORD_TYPES.forEach(x=>{
+  let label=document.createElement('label'),input=document.createElement('input');
+  input.type='checkbox';input.checked=selectedKinds.has(x.id);input.dataset.kind=x.id;
+  input.addEventListener('change',()=>{
+   if(input.checked){
+    selectedKinds.add(x.id);
+    renderChoices();
+   }else{
+    if(selectedKinds.size===1){input.checked=true;return}
+    selectedKinds.delete(x.id);
+    renderChoices();
+    newTask();
+   }
+  });
+  label.append(input,document.createTextNode(x.label));box.appendChild(label);
+ });
+}
+function renderChoices(){
+ let box=document.getElementById('choices');box.innerHTML='';
+ CHORD_TYPES.filter(x=>selectedKinds.has(x.id)).forEach(x=>{
+  let b=document.createElement('button');b.textContent=x.label;b.dataset.answer=x.id;
+  b.onclick=()=>identify(x.label,b);box.appendChild(b);
+ });
+}
+function identify(label,button){
+ if(phase!=='identify')return;
+ const selectedId=button.dataset.answer;
+ const equivalentBorrowedVii=task.kind==='borrowed'&&task.chord.type==='vii°'&&selectedId==='diminishedSeventh';
+ const correct=selectedId===task.kind||equivalentBorrowedVii;
+ [...document.querySelectorAll('#choices button')].forEach(b=>b.disabled=true);
+ total++;document.getElementById('score').textContent=`Completed: ${score} / ${total}`;
+ if(!correct){
+  const correctLabel=CHORD_TYPES.find(x=>x.id===task.kind)?.label||task.kind;
+  setFeedback(`Not quite. The correct identification is ${correctLabel}.`);
+  document.getElementById('next').style.display='inline-block';return;
+ }
+ setFeedback('Correct identification. Now resolve the chord.',true);beginResolution();
+}
+function beginResolution(){
+ phase='resolve';sourceNotes=task.notes.map(p=>({...p}));notes=[];selected=-1;
+ if(task.kind==='neapolitan'){resolution=rand(['i64','V','V7']);task.targets=buildN6Targets();if(!task.targets){setFeedback('Could not determine the ra voice in this voicing.');return}}
+ else if(task.kind==='augmentedSixth'){resolution=task.chord.type==='Italian'?'V':task.chord.type==='German'?'I64':rand(['I64','V']);}
+ else if(task.kind==='diminishedSeventh'){resolution=task.chord.targetLabel;}
+ else if(task.kind==='secondaryDominant'){resolution=task.chord.targetLabel;}
+ else {resolution=(task.chord.type==='iv'||task.chord.type==='ii dim6')?'I64':rand(['I64','V','V7']);}
+ document.getElementById('chordPrompt').textContent=(task.kind==='diminishedSeventh'||task.kind==='secondaryDominant')?resolution:resolution==='i64'?'i⁶₄':resolution==='V7'?'V⁷':resolution==='I64'?'I⁶₄':'V';
+ document.getElementById('workTitle').textContent='Resolve the chord';
+ document.getElementById('instructions').textContent='Enter the assigned resolution.';
+ document.getElementById('choices').style.display='none';document.getElementById('editControls').style.display='flex';document.getElementById('show').style.display='inline-block';document.getElementById('next').style.display='none';draw();
+}
+document.getElementById('check').onclick=()=>{
+ if(notes.length!==4){setFeedback(`Enter four notes before checking. You have entered ${notes.length}.`);return}
+ if(!upperSpacingOk(notes)){setFeedback('Check the spacing: tenor–alto and alto–soprano must each be no wider than an octave.');return}
+ if(task.kind==='neapolitan'){if(!n6ResolutionOk()){setFeedback('Not quite. Check the prescribed bass and upper-voice resolutions, the vocal ranges (bass G2–D4, tenor C3–G4, alto G3–D5, soprano C4–G5), and the chord voicing.');return}}
+ else if(task.kind==='augmentedSixth'){if(!matchSets(notes,augCandidateSets())){setFeedback('Not quite. fi must rise by half-step, le must fall by half-step, and each remaining voice must stay on a common tone or move by step to a chord tone (including me rising by augmented unison to mi).');return}if(!augDestinationTones().every(t=>notes.some(p=>sameNameAcc(p,t)))){setFeedback(`Your voice leading is valid, but the ${resolution==='I64'?'I⁶₄':'V'} chord must include all three chord tones.`);return}}
+ else if(task.kind==='diminishedSeventh'){if(!diminishedResolutionOk()){setFeedback(`Not quite. The root must rise by half-step, the diminished seventh must fall by half-step, and the other voices must move by step to ${resolution} chord tones. Include the root and third.`);return}}
+ else if(task.kind==='secondaryDominant'){if(!secondaryResolutionOk()){setFeedback(`Not quite. Check the chordal seventh's downward step, the bass motion, the third's upward step when it is in the bass or soprano, and the destination chord's required tones.`);return}}
+ else if(!borrowedResolutionOk()){setFeedback('Not quite. Check the required bass direction, the common-tone/stepwise motion in the upper voices, and make sure the destination chord is complete.');return}
+ score++;document.getElementById('score').textContent=`Completed: ${score} / ${total}`;setFeedback('✓ Correct resolution! Loading the next prompt…',true);
+ document.getElementById('next').style.display='none';
+ document.getElementById('editControls').style.display='none';
+ document.getElementById('show').style.display='none';
+ setTimeout(()=>newTask(),1100);
+};
+document.getElementById('next').onclick=()=>newTask();
+document.getElementById('show').onclick=()=>{
+ if(phase==='identify'){setFeedback('Identify the chord before resolving it.');return}
+ if(task.kind==='neapolitan'){notes=task.targets.map(p=>({...p}));}
+ else if(task.kind==='augmentedSixth'){let sets=augCandidateSets(),solutions=[];function build(i,a){if(i===sets.length){if(augDestinationTones().every(t=>a.some(p=>sameNameAcc(p,t)))&&upperSpacingOk(a))solutions.push(a);return}for(let p of sets[i])build(i+1,[...a,{...p}])}build(0,[]);if(!solutions.length){setFeedback('A resolution solution could not be generated for this voicing.');return}notes=solutions[0]}
+ else if(task.kind==='diminishedSeventh'){let sets=diminishedCandidateSets(),solutions=[];function build(i,a){if(i===sets.length){let old=notes;notes=a;if(diminishedResolutionOk())solutions.push(a.map(p=>({...p})));notes=old;return}for(let p of sets[i])build(i+1,[...a,{...p}])}build(0,[]);if(!solutions.length){setFeedback('A resolution solution could not be generated for this voicing.');return}notes=solutions[0]}
+ else if(task.kind==='secondaryDominant'){const solution=secondaryFindSolution();if(!solution){setFeedback('A resolution solution could not be generated for this voicing.');return}notes=solution}
+ else {let sets=borrowedCandidateSets(),solutions=[];function build(i,a){if(i===sets.length){let old=notes;notes=a;if(borrowedResolutionOk())solutions.push(a.map(p=>({...p})));notes=old;return}for(let p of sets[i])build(i+1,[...a,{...p}])}build(0,[]);if(!solutions.length){setFeedback('A resolution solution could not be generated for this voicing.');return}notes=solutions[0]}
+ selected=-1;draw();setFeedback('The resolution solution is shown.',true);
+};
+function newTask(){
+ phase='identify';resolution=null;sourceNotes=[];notes=[];selected=-1;
+ let kind=rand([...selectedKinds]),key;
+ if(kind==='neapolitan'){let choices=minors.filter(k=>k.name!==previousKey);key=rand(choices);previousKey=key.name;let chord=n6Chord(key),v=n6PreferredVoicing(key,chord);if(!v)return newTask();task={kind,key,chord,notes:v}}
+ else if(kind==='augmentedSixth'){let choices=majors.filter(k=>k.name!==previousKey);key=rand(choices);previousKey=key.name;let type=rand(['Italian','French','German']),chord=augChord(key,type),v=augPreferredVoicing(chord);if(!v)return newTask();task={kind,key,chord,notes:v}}
+ else if(kind==='borrowed'){let choices=majors.filter(k=>k.name!==previousKey);key=rand(choices);previousKey=key.name;let type=rand(['iv','iv6','ii dim6','ii dim43']),chord=borrowedChord(key,type),v=borrowedPreferredVoicing(chord,key);if(!v)return newTask();task={kind,key,chord,notes:v}}
+ else if(kind==='diminishedSeventh'){let all=[...majors,...minors],choices=all.filter(k=>k.name!==previousKey);key=rand(choices);previousKey=key.name;let mode=majors.includes(key)?'major':'minor',targets=mode==='major'?[1,4]:[3,0],targetDegree=rand(targets),chord=diminishedSeventhChord(key,mode,targetDegree),v=diminishedPreferredVoicing(chord);if(!v)return newTask();task={kind,key,chord,notes:v,mode}}
+ else {let all=[...majors,...minors],choices=all.filter(k=>k.name!==previousKey);key=rand(choices);previousKey=key.name;let mode=majors.includes(key)?'major':'minor',targets=mode==='major'?[1,2,3,4,5]:[2,3,4,5],targetDegree=rand(targets),chord=secondaryDominantChord(key,mode,targetDegree),v=secondaryPreferredVoicing(key,chord);if(!v)return newTask();task={kind,key,chord,notes:v,mode}}
+ document.getElementById('keyName').textContent=key.name;document.getElementById('keyLabel').textContent=kind==='neapolitan'?'MINOR KEY':(kind==='diminishedSeventh'||kind==='secondaryDominant')?(task.mode==='major'?'MAJOR KEY':'MINOR KEY'):'MAJOR KEY';document.getElementById('chordPrompt').textContent='Identify the chord';document.getElementById('workTitle').textContent='Identify the chord';document.getElementById('instructions').textContent='Identify the chord shown.';document.getElementById('feedback').textContent='';document.getElementById('feedback').className='';document.getElementById('choices').style.display='flex';document.getElementById('editControls').style.display='none';document.getElementById('show').style.display='none';document.getElementById('next').style.display='none';document.getElementById('next').textContent='Next Exercise';renderChoices();sourceNotes=task.notes.map(p=>({...p}));draw();
+}
+renderFilters();
+newTask();
+</script></body></html>
